@@ -1,0 +1,20 @@
+from drone_env import Drone3DEnv
+import numpy as np
+import time
+
+# Create the environment
+env = Drone3DEnv()
+
+obs, _ = env.reset()
+
+# Simulate drone movement
+for _ in range(100):
+    action = np.random.uniform(-1, 1, size=(3,))  # Random movement
+    obs, reward, done, _, _ = env.step(action)
+    print(f"Position: {obs}, Reward: {reward}")
+    time.sleep(0.1)  # Slow down for better visualization
+    if done:
+        print("Drone reached the target!")
+        break
+
+env.close()
