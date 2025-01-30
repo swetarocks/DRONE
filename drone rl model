@@ -1,0 +1,41 @@
+# drone_rl_model.py
+import gym
+from stable_baselines3 import PPO
+from DroneEnv import DroneEnvWithVision
+from config import TRAINING_CONFIG
+
+def train_model():
+    env = DroneEnvWithVision()
+
+    model = PPO('CnnPolicy', env, verbose=1,
+                learning_rate=TRAINING_CONFIG['learning_rate'],
+                batch_size=TRAINING_CONFIG['batch_size'],
+                n_steps=TRAINING_CONFIG['n_steps'],
+                n_epochs=TRAINING_CONFIG['n_epochs'],
+                gamma=TRAINING_CONFIG['gamma'],
+                gae_lambda=TRAINING_CONFIG['gae_lambda'],
+                ent_coef=TRAINING_CONFIG['ent_coef'],
+                vf_coef=TRAINING_CONFIG['vf_coef'],
+                max_grad_norm=TRAINING_CONFIG['max_grad_norm'])
+
+    model.learn(total_timesteps=TRAINING_CONFIG['total_timesteps'])
+    model.save("drone_rl_model_with_vision")
+
+def test_model():
+    model = PPO.load("drone_rl_model_with_vision")
+    env = DroneEnvWithVision()
+
+    obs = env.reset()
+    total_reward = 0
+
+    for _ in range(1000):
+        action, _states = model.predict(obs, deterministic=True)
+        obs, reward, done, info = env.step(action)
+        total_reward += reward
+        if done:
+            print(f"Test finished with total reward: {total_reward}")
+            break
+
+if __name__ == "__main__":
+    train_model()
+    test_model()
