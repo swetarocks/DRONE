@@ -1,64 +1,80 @@
-import pybullet as p
-import pybullet_data
-import time
-import numpy as np
 import gym
+import airsim
+import numpy as np
+import cv2
 from gym import spaces
 
-class UAVSimulator(gym.Env):
+class DroneEnvWithVision(gym.Env):
     def __init__(self):
-        super(UAVSimulator, self).__init__()
-        self.client = p.connect(p.GUI)  # Connect to PyBullet (use p.DIRECT for headless mode)
-        p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        p.setGravity(0, 0, -9.8)
-        
-        # Load plane and drone
-        self.plane = p.loadURDF("plane.urdf")
-        self.drone = p.loadURDF("quadrotor.urdf", [0, 0, 1])
-        
-        self.time_step = 1./240.  # Simulation time step
-        
-        # Action and observation space
-        self.action_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)  # Thrust per motor
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float32)  # Position and velocity
-    
+        super(DroneEnvWithVision, self).__init__()
+
+        # Connect to AirSim Client
+        self.client = airsim.MultirotorClient()
+        self.client.confirmConnection()
+
+        # Action space: Move drone forward, backward, left, right, stay
+        self.action_space = spaces.Discrete(5)
+
+        # Observation space: RGB image (64x64)
+        self.observation_space = spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8)
+
+        self.goal_position = np.array([50, 50, 10])  # Set goal position for drone
+
     def reset(self):
-        p.resetSimulation(self.client)
-        p.setGravity(0, 0, -9.8)
-        self.plane = p.loadURDF("plane.urdf")
-        self.drone = p.loadURDF("quadrotor.urdf", [0, 0, 1])
-        return self.get_observation()
-    
-    def get_observation(self):
-        pos, orn = p.getBasePositionAndOrientation(self.drone)
-        vel, ang_vel = p.getBaseVelocity(self.drone)
-        return np.array(pos + vel)
-    
+        # Reset the drone position to its initial state
+        self.client.reset()
+        state = self.client.getMultirotorState()
+        self.start_position = np.array([state.kinematics_estimated.position.x_val,
+                                        state.kinematics_estimated.position.y_val,
+                                        state.kinematics_estimated.position.z_val])
+
+        # Capture an image from the camera (Scene Camera ID 0)
+        responses = self.client.simGetImages([airsim.ImageRequest(0, airsim.ImageType.Scene)])
+        image_data = responses[0].image_data_uint8
+        img = np.frombuffer(image_data, dtype=np.uint8).reshape((480, 640, 3))
+
+        # Resize to 64x64 resolution for faster processing
+        img_resized = cv2.resize(img, (64, 64))
+        return img_resized
+
     def step(self, action):
-        """Applies individual motor thrusts."""
-        for i in range(4):
-            p.applyExternalForce(self.drone, i, forceObj=[0, 0, action[i] * 10], posObj=[0, 0, 0], flags=p.LINK_FRAME)
-        
-        p.stepSimulation()
-        time.sleep(self.time_step)
-        
-        obs = self.get_observation()
-        reward = -np.linalg.norm(obs[:2])  # Reward based on staying close to origin
-        done = obs[2] < 0  # End episode if UAV crashes
-        return obs, reward, done, {}
-    
+        # Define actions for drone (move in different directions)
+        if action == 0:
+            self.client.moveByVelocityAsync(5, 0, 0, 1)  # Move forward
+        elif action == 1:
+            self.client.moveByVelocityAsync(-5, 0, 0, 1)  # Move backward
+        elif action == 2:
+            self.client.moveByVelocityAsync(0, 5, 0, 1)  # Move left
+        elif action == 3:
+            self.client.moveByVelocityAsync(0, -5, 0, 1)  # Move right
+        elif action == 4:
+            self.client.moveByVelocityAsync(0, 0, -5, 1)  # Move down
+
+        state = self.client.getMultirotorState()
+        position = np.array([state.kinematics_estimated.position.x_val,
+                             state.kinematics_estimated.position.y_val,
+                             state.kinematics_estimated.position.z_val])
+
+        # Capture the image from the camera
+        responses = self.client.simGetImages([airsim.ImageRequest(0, airsim.ImageType.Scene)])
+        image_data = responses[0].image_data_uint8
+        img = np.frombuffer(image_data, dtype=np.uint8).reshape((480, 640, 3))
+
+        img_resized = cv2.resize(img, (64, 64))
+
+        # Reward: negative distance to goal
+        distance_to_goal = np.linalg.norm(self.goal_position - position)
+        reward = -distance_to_goal
+
+        if position[2] < 1.0:
+            reward -= 10  # Penalize for crashing
+
+        done = distance_to_goal < 2.0 or position[2] < 1.0
+
+        return img_resized, reward, done, {}
+
     def render(self, mode='human'):
-        pass  # PyBullet GUI handles rendering
-    
+        pass
+
     def close(self):
-        p.disconnect()
-        
-if __name__ == "__main__":
-    env = UAVSimulator()
-    obs = env.reset()
-    for _ in range(100):
-        action = env.action_space.sample()
-        obs, reward, done, _ = env.step(action)
-        if done:
-            break
-    env.close()
+        self.client.reset()
