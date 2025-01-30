@@ -1,0 +1,21 @@
+from drone_env import Drone3DEnv
+from stable_baselines3 import PPO
+import time
+
+# Load trained model
+model = PPO.load("drone_rl_model")
+
+# Create the environment
+env = Drone3DEnv()
+
+obs, _ = env.reset()
+for _ in range(100):
+    action, _ = model.predict(obs)
+    obs, reward, done, _, _ = env.step(action)
+    print(f"Position: {obs}, Reward: {reward}")
+    time.sleep(0.1)
+    if done:
+        print("Drone reached the target!")
+        break
+
+env.close()
